@@ -30,3 +30,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Artefatos gerados pelo pipeline ###
+dist/
+gitleaks-relatorio.json
