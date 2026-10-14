@@ -1,5 +1,16 @@
 # Biblioteca
 
+![CI - Biblioteca](https://github.com/<OWNER>/<REPO>/actions/workflows/ci.yml/badge.svg)
+
+> **Trabalho 5 — Pipeline CI mínimo e reprodutível**
+> - Documentação do pipeline: [`docs/T5-PIPELINE.md`](docs/T5-PIPELINE.md)
+> - Roteiro de entrega e evidências: [`docs/PASSO-A-PASSO.md`](docs/PASSO-A-PASSO.md)
+> - Definição do pipeline: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+> - Reproduzir localmente: `./scripts/ci-local.sh` (ou `--docker`)
+>
+> Para executar a aplicação é obrigatório definir a variável `JWT_SECRET` (mínimo 32 caracteres):
+> `export JWT_SECRET="$(openssl rand -base64 48)" && ./mvnw spring-boot:run`
+
 Este projeto é uma aplicação web de **Biblioteca** construída com **Spring Boot**, com duas formas de acesso:
 
 - **Aplicação Web (Thymeleaf)**: interface HTML com autenticação via **login por formulário**.
@@ -93,7 +104,7 @@ Conforme o `pom.xml`:
 
 - **H2**: `spring.datasource.url=jdbc:h2:mem:banco`
 - **Console H2**: `spring.h2.console.path=/h2-console`
-- **Segredo JWT**: `api.security.token.secret=...`
+- **Segredo JWT**: `api.security.token.secret=${JWT_SECRET}` (lido da variável de ambiente; não fica no repositório)
   - Este valor é usado para assinar e validar tokens (HMAC SHA-256).
 
 ## Autenticação e autorização (detalhamento)
@@ -114,7 +125,7 @@ O projeto define **duas cadeias de filtros** (`SecurityFilterChain`) separadas:
 
 ### 2) Propriedade `secret` (`@Value("${api.security.token.secret}")`)
 
-- Lê o segredo definido em `application.properties`.
+- Lê o segredo de `application.properties`, que por sua vez vem da variável de ambiente `JWT_SECRET`.
 - É usado para criar as chaves de **assinatura** e **validação** do JWT (algoritmo HS256).
 
 ### 3) Cadeia da API: `apiFilterChain(HttpSecurity http)`
