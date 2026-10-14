@@ -11,6 +11,8 @@
 | Geovane de Lucas Quinhone Ker |
 | Romario Rodrigues |
 | João Cintra |
+| Leonardo Mirandola |
+| Andrei Matos |
 
 **Repositório:** `https://github.com/GeoQuinhone/AtividadeCloud` 
 
