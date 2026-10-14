@@ -96,6 +96,8 @@
 	</dependencies>
 
 	<build>
+		<!-- Nome fixo do pacote: target/biblioteca.jar (a versao/commit e aplicada pelo pipeline) -->
+		<finalName>biblioteca</finalName>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>

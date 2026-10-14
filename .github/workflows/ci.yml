@@ -1,0 +1,284 @@
+# =============================================================================
+# T5 - Pipeline CI minimo e reprodutivel | Aplicacao Biblioteca
+# Cloud Computing e DevOps Avancado - UniALFA
+#
+# Fluxo:  validacao  ->  build-e-testes  ->  imagem-docker
+#   1. validacao       : arquivos obrigatorios + deteccao de segredos (gitleaks)
+#   2. build-e-testes  : compila, roda os testes e gera o JAR identificado pelo commit
+#   3. imagem-docker   : constroi a imagem a partir DO MESMO JAR, faz smoke test
+#                        e publica no GHCR (somente em push na branch principal ou tag)
+# Qualquer falha interrompe as etapas seguintes.
+# =============================================================================
+name: CI - Biblioteca
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+# Menor privilegio: por padrao o token so le o repositorio.
+permissions:
+  contents: read
+
+# Um novo push na mesma branch cancela a execucao anterior que ainda estiver rodando.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '21'
+  GITLEAKS_VERSION: '8.30.1'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  validacao:
+    name: 1. Validacao inicial
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (historico completo para a varredura de segredos)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verificar arquivos obrigatorios
+        run: |
+          set -euo pipefail
+          faltando=0
+          for f in pom.xml mvnw .mvn/wrapper/maven-wrapper.properties Dockerfile \
+                   src/main/resources/application.properties; do
+            if [ ! -f "$f" ]; then
+              echo "::error file=$f::Arquivo obrigatorio ausente: $f"
+              faltando=1
+            fi
+          done
+          if [ ! -x mvnw ]; then
+            echo "::error file=mvnw::mvnw sem permissao de execucao. Corrija com: git update-index --chmod=+x mvnw"
+            faltando=1
+          fi
+          # O segredo do JWT deve vir de variavel de ambiente, nunca escrito no arquivo.
+          if ! grep -q '^api.security.token.secret=\${JWT_SECRET}' src/main/resources/application.properties; then
+            echo "::error file=src/main/resources/application.properties::api.security.token.secret deve ser \${JWT_SECRET}"
+            faltando=1
+          fi
+          exit $faltando
+
+      - name: Instalar gitleaks (versao fixa + verificacao de checksum)
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          arquivo="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -sSfLO "$base/$arquivo"
+          curl -sSfLO "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " $arquivo\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "$arquivo" gitleaks
+          ./gitleaks version
+
+      - name: Detectar segredos no codigo e no historico
+        run: |
+          "$RUNNER_TEMP/gitleaks" git . --redact --verbose \
+            --report-format json --report-path gitleaks-relatorio.json
+
+      - name: Publicar relatorio do gitleaks (quando encontrar algo)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gitleaks-relatorio-${{ github.sha }}
+          path: gitleaks-relatorio.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  build-e-testes:
+    name: 2. Build, testes e artefato
+    needs: validacao
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      short_sha: ${{ steps.id.outputs.short_sha }}
+      artefato: ${{ steps.id.outputs.artefato }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Java ${{ env.JAVA_VERSION }} (Temurin) com cache do Maven
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Identificar a execucao
+        id: id
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "artefato=biblioteca-$short_sha" >> "$GITHUB_OUTPUT"
+
+      # clean -> ambiente limpo; verify -> compila, roda TODOS os testes e empacota.
+      # Se compilacao ou teste falhar, o Maven sai com erro e o JAR nao e publicado.
+      - name: Build e testes (mvnw clean verify)
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+
+      - name: Resumo dos testes
+        if: always()
+        run: python3 scripts/resumo_testes.py target/surefire-reports >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar relatorios de teste
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: relatorio-testes-${{ steps.id.outputs.short_sha }}
+          path: target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Identificar o artefato (nome com commit + checksum + metadados)
+        run: |
+          set -euo pipefail
+          nome="${{ steps.id.outputs.artefato }}"
+          mkdir -p dist
+          cp target/biblioteca.jar "dist/$nome.jar"
+          cat > dist/build-info.txt <<EOF
+          artefato=$nome.jar
+          repositorio=$GITHUB_REPOSITORY
+          commit=$GITHUB_SHA
+          ref=$GITHUB_REF
+          evento=$GITHUB_EVENT_NAME
+          autor_execucao=$GITHUB_ACTOR
+          execucao=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          tentativa=$GITHUB_RUN_ATTEMPT
+          data_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          java=$(java -version 2>&1 | head -1)
+          EOF
+          sed -i 's/^ *//' dist/build-info.txt
+          (cd dist && sha256sum "$nome.jar" > "$nome.jar.sha256")
+          cat dist/build-info.txt
+          {
+            echo "### Artefato gerado"
+            echo ""
+            echo "| Campo | Valor |"
+            echo "|---|---|"
+            echo "| Arquivo | \`$nome.jar\` |"
+            echo "| Commit | \`$GITHUB_SHA\` |"
+            echo "| SHA-256 | \`$(cut -d' ' -f1 dist/$nome.jar.sha256)\` |"
+            echo "| Tamanho | $(du -h dist/$nome.jar | cut -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar artefato (JAR + checksum + build-info)
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.id.outputs.artefato }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  imagem-docker:
+    name: 3. Imagem Docker (build, smoke test e publicacao)
+    needs: build-e-testes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write   # necessario apenas para publicar no GitHub Container Registry
+    env:
+      SHORT_SHA: ${{ needs.build-e-testes.outputs.short_sha }}
+      ARTEFATO: ${{ needs.build-e-testes.outputs.artefato }}
+      # Publica somente em push na branch principal ou em tag de versao (nunca em PR).
+      PUBLICAR: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    steps:
+      - name: Checkout (Dockerfile)
+        uses: actions/checkout@v7
+
+      - name: Baixar o MESMO artefato gerado na etapa anterior
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.ARTEFATO }}
+          path: dist/
+
+      - name: Conferir integridade do artefato
+        run: cd dist && sha256sum -c "$ARTEFATO.jar.sha256"
+
+      - name: Definir nome e tags da imagem
+        run: |
+          imagem="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGEM=$imagem" >> "$GITHUB_ENV"
+          tags="$imagem:sha-$SHORT_SHA"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tags="$tags $imagem:${GITHUB_REF_NAME}"
+          fi
+          echo "TAGS=$tags" >> "$GITHUB_ENV"
+
+      - name: Build da imagem (sem recompilar o codigo)
+        run: |
+          set -euo pipefail
+          args=()
+          for t in $TAGS; do args+=(-t "$t"); done
+          docker build \
+            --build-arg JAR_FILE="dist/$ARTEFATO.jar" \
+            --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            --label org.opencontainers.image.created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${args[@]}" .
+          docker image ls "$IMAGEM"
+
+      - name: Smoke test (sobe o container e verifica respostas basicas)
+        run: |
+          set -euo pipefail
+          # Segredo gerado so para este teste; nao e gravado em lugar nenhum.
+          JWT_SECRET="$(openssl rand -base64 48)"
+          echo "::add-mask::$JWT_SECRET"
+          docker run -d --name biblioteca-smoke -p 8080:8080 \
+            -e JWT_SECRET="$JWT_SECRET" "$IMAGEM:sha-$SHORT_SHA"
+
+          echo "Aguardando a aplicacao responder..."
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://localhost:8080/login; then
+              echo "Aplicacao respondeu em ~${i}s"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "::error::A aplicacao nao respondeu em 60s"
+              docker logs biblioteca-smoke
+              exit 1
+            fi
+            sleep 1
+          done
+
+          status_login=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/login)
+          status_api=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/livros)
+          echo "GET /login      -> $status_login (esperado 200)"
+          echo "GET /api/livros -> $status_api (esperado 401 sem token)"
+          [ "$status_login" = "200" ] && [ "$status_api" = "401" ] || { docker logs biblioteca-smoke; exit 1; }
+
+      - name: Encerrar container do smoke test
+        if: always()
+        run: docker rm -f biblioteca-smoke || true
+
+      - name: Login no GitHub Container Registry
+        if: env.PUBLICAR == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publicar imagem
+        if: env.PUBLICAR == 'true'
+        run: for t in $TAGS; do docker push "$t"; done
+
+      - name: Resumo da imagem
+        if: always()
+        run: |
+          {
+            echo "### Imagem Docker"
+            echo ""
+            echo "| Campo | Valor |"
+            echo "|---|---|"
+            echo "| Tags | \`$TAGS\` |"
+            echo "| Construida a partir de | \`$ARTEFATO.jar\` |"
+            echo "| Publicada no GHCR | $PUBLICAR |"
+          } >> "$GITHUB_STEP_SUMMARY"

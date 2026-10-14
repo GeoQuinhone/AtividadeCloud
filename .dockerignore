@@ -1,0 +1,4 @@
+# O contexto de build da imagem so precisa do JAR ja construido.
+*
+!target/biblioteca.jar
+!dist/*.jar
