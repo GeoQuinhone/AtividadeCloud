@@ -9,10 +9,10 @@
 | Equipe |
 |---|
 | Geovane de Lucas Quinhone Ker |
-| _(nome)_ |
-| _(nome)_ |
+| Romario Rodrigues |
+| João Cintra |
 
-**Repositório:** `https://github.com/<OWNER>/<REPO>` _(preencher)_
+**Repositório:** `https://github.com/GeoQuinhone/AtividadeCloud` 
 
 ---
 
@@ -196,27 +196,42 @@ Outra equipe consegue reproduzir porque tudo está versionado no repositório: J
 
 ### 11.1 Execução bem-sucedida
 
-- Link da execução: _(colar)_
-- Commit: _(colar)_
+- **Link da execução:** https://github.com/GeoQuinhone/AtividadeCloud/actions/runs/38578016317
+- **Evento:** `push` na branch `main`
+- **Commit:** [`04af6c9`](https://github.com/GeoQuinhone/AtividadeCloud/commit/04af6c9a6bc3e8be0187dd35bf48ec18a1fc91a9)
+- **Resultado:** os 3 jobs concluídos com sucesso; 16 testes executados sem falhas; artefato `biblioteca-04af6c9.jar` gerado; imagem publicada no GHCR com a tag `sha-04af6c9`.
 
-_(print do grafo com os 3 jobs verdes)_
+**Grafo da execução — os 3 jobs verdes**
 
-_(print do resumo: tabela de testes + artefato gerado + imagem)_
+![Grafo com os 3 jobs verdes](evidencias/sucesso-grafo.png)
 
-_(print da lista de artefatos: `biblioteca-<sha7>` e `relatorio-testes-<sha7>`)_
+**Resumo — testes e artefato gerado**
+
+![Resumo: testes e artefato gerado](evidencias/sucesso-summary.png)
+
+**Resumo — imagem Docker publicada**
+
+![Resumo: imagem Docker publicada](evidencias/sucesso-imagem.png)
 
 ### 11.2 Falha detectada
 
-- Link da execução: _(colar)_
-- Pull request: _(colar)_
-- O que foi alterado: _(ex.: removida a codificação da senha em `UsuarioService.salvar`)_
-- Onde o pipeline parou: _(ex.: job 2, step "Build e testes"; job 3 skipped)_
+- **Link da execução:** https://github.com/GeoQuinhone/AtividadeCloud/actions/runs/38583379738
+- **Pull request:** https://github.com/GeoQuinhone/AtividadeCloud/pull/1
+- **O que foi alterado:** na branch `demo/falha-senha`, foi comentada a linha que codifica a senha em `UsuarioService.salvar`. Com isso, a senha passaria a ser gravada em texto puro.
+- **Onde o pipeline parou:** job **2. Build, testes e artefato**, step **Build e testes**. O teste `UsuarioServiceTest.codificaSenhaEmTextoPuro` falhou (esperado o hash BCrypt, recebido `senha123`): 16 testes executados, 1 falha, `BUILD FAILURE`. O job **3. Imagem Docker** ficou como *skipped*: nenhum JAR nem imagem foi gerado.
+- **Resultado:** o merge do PR ficou bloqueado pelo check obrigatório, e o defeito foi descoberto **antes** de chegar à branch principal. O PR foi fechado sem merge.
 
-_(print do grafo com o job vermelho e o seguinte skipped)_
+**PR com o check falhando e o merge bloqueado**
 
-_(print do resumo mostrando o teste que falhou e a mensagem)_
+![PR com o check falhando e o merge bloqueado](evidencias/falha-pr.png)
 
-_(print do PR com o merge bloqueado pelo check)_
+**Log do Maven com o teste que falhou**
+
+![Log do Maven com o teste que falhou](evidencias/falha-log.png)
+
+**Resumo dos testes mostrando a falha**
+
+![Resumo dos testes mostrando a falha](evidencias/falha-summary.png)
 
 ## 12. Checklist do Trabalho 5 (slide 67)
 
