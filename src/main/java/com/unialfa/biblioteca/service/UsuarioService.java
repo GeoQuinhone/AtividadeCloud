@@ -30,7 +30,7 @@ public class UsuarioService implements UserDetailsService {
         return repository.findAll();
     }
 
-    public Usuario salvar(Usuario usuario) {
+       public Usuario salvar(Usuario usuario) {
         if (usuario.getId() != null) {
             var usuarioDb = repository.findById(usuario.getId()).orElse(null);
             if ((usuario.getPassword() == null || usuario.getPassword().isBlank()) && usuarioDb != null) {
@@ -41,7 +41,7 @@ public class UsuarioService implements UserDetailsService {
         if (usuario.getPassword() != null && !usuario.getPassword().isBlank()) {
             var pwd = usuario.getPassword();
             if (!(pwd.startsWith("$2a$") || pwd.startsWith("$2b$") || pwd.startsWith("$2y$"))) {
-                usuario.setPassword(passwordEncoder.encode(pwd));
+                // usuario.setPassword(passwordEncoder.encode(pwd));
             }
         }
 
